@@ -1,0 +1,13 @@
+services:
+  - type: web
+    name: candlestick-vit-predictor
+    runtime: docker
+    plan: starter
+    dockerfilePath: ./Dockerfile
+    envVars:
+      - key: GOOGLE_API_KEY
+        sync: false
+      - key: TAVILY_API_KEY
+        sync: false
+    healthCheckPath: /_stcore/health
+    autoDeploy: true

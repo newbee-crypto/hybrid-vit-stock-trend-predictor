@@ -1,0 +1,49 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg-info/
+dist/
+build/
+*.egg
+
+# Virtual Environment
+venv/
+.venv/
+env/
+
+# Environment Variables
+.env
+
+# Data (large files)
+data/raw/
+data/charts/
+data/labels/*.csv
+data/patterns/
+
+# Model checkpoints
+models/checkpoints/*.pth
+models/checkpoints/*.pt
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Jupyter
+.ipynb_checkpoints/
+labeled_dataset_v2.csv
+fix_jupyter.py
+
+# Streamlit
+.streamlit/secrets.toml
+
+# Logs
+*.log
