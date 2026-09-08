@@ -10,10 +10,14 @@ Usage:
 
 import sys
 from pathlib import Path
+from prometheus_client import start_http_server
+from src.monitoring.metrics import APP_REQUESTS
 
 # Add project root to path
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
+APP_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(PROJECT_ROOT))
+sys.path.insert(0, str(APP_DIR))
 
 import streamlit as st
 from dotenv import load_dotenv
@@ -25,7 +29,7 @@ from config import (
     STOCK_TICKERS,
     ensure_dirs,
 )
-from app.utils.ui_helpers import inject_custom_css
+from utils.ui_helpers import inject_custom_css
 
 # Load environment variables
 load_dotenv()
@@ -63,8 +67,14 @@ def initialize_session_state():
     if "selected_ticker" not in st.session_state:
         st.session_state.selected_ticker = STOCK_TICKERS[0]
 
+@st.cache_resource
+def start_prometheus_metrics_server():
+    start_http_server(8000)
+    return True
 
 def main():
+    start_prometheus_metrics_server()
+    APP_REQUESTS.labels(page="home").inc()
     """Main application entry point."""
     initialize_session_state()
 

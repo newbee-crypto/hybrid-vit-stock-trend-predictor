@@ -9,12 +9,14 @@ import sys
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
+APP_DIR = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
+sys.path.insert(0, str(APP_DIR))
 
 import streamlit as st
 
 from config import STOCK_TICKERS, INITIAL_CAPITAL
-from app.utils.ui_helpers import (
+from utils.ui_helpers import (
     inject_custom_css,
     metric_card,
     section_header,
@@ -24,7 +26,7 @@ from app.utils.ui_helpers import (
 inject_custom_css()
 
 st.markdown("# 📊 Backtesting")
-st.markdown("Test the ViT prediction strategy against historical data.")
+st.markdown("Test the hybrid model prediction strategy against historical data.")
 
 st.markdown(custom_divider(), unsafe_allow_html=True)
 

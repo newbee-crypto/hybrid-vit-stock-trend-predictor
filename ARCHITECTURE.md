@@ -68,7 +68,7 @@ graph TB
 |------|---------|
 | `collect_data.py` | Downloads OHLCV data from Yahoo Finance for 8 stocks |
 | `generate_charts.py` | Creates 224×224 candlestick chart images with sliding window |
-| `label_data.py` | Computes forward returns, RSI, MACD, trend score, assigns labels, splits data |
+| `label_data.py` | Computes forward returns, RSI, MACD, assigns labels, splits data |
 
 ### Model (`src/model/`)
 | File | Purpose |

@@ -19,8 +19,7 @@ if __name__ == "__main__":
 import os
 from dotenv import load_dotenv
 from langchain_google_genai import ChatGoogleGenerativeAI
-from langchain.agents import AgentExecutor, create_tool_calling_agent
-from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
+from langchain.agents import create_agent
 from langchain_core.tools import tool
 from langchain_core.messages import HumanMessage, AIMessage
 
@@ -43,7 +42,7 @@ def analyze_chart(ticker: str) -> str:
         ticker: Stock ticker symbol (e.g., 'AAPL', 'TSLA')
     """
     try:
-        from src.model.inference import predict_image
+        from src.model.inference import predict_image, build_live_aux_features
         from config import CHARTS_DIR, LABELS_DIR
         import pandas as pd
 
@@ -64,11 +63,10 @@ def analyze_chart(ticker: str) -> str:
             ticker_data = df[df["ticker"] == ticker].sort_values("date")
             if not ticker_data.empty:
                 last_row = ticker_data.iloc[-1]
-                aux_features = [
-                    float(last_row.get("RSI", 0.0) or 0.0),
-                    float(last_row.get("MACD", 0.0) or 0.0),
-                    float(last_row.get("trend_score", 0.0) or 0.0),
-                ]
+                aux_features = build_live_aux_features(
+                    rsi=last_row.get("RSI"),
+                    macd=last_row.get("MACD"),
+                )
 
         result = predict_image(str(latest_chart), aux_features=aux_features)
 
@@ -170,7 +168,7 @@ def get_fusion_signal(ticker: str) -> str:
     """
     try:
         from src.genai.signal_fusion import fuse_signals
-        from src.model.inference import predict_image
+        from src.model.inference import predict_image, build_live_aux_features
         from src.genai.rag_patterns import find_similar_patterns, initialize_pattern_db
         from config import CHARTS_DIR, LABELS_DIR
         import pandas as pd
@@ -187,11 +185,10 @@ def get_fusion_signal(ticker: str) -> str:
                 ticker_data = df[df["ticker"] == ticker].sort_values("date")
                 if not ticker_data.empty:
                     last_row = ticker_data.iloc[-1]
-                    aux_features = [
-                        float(last_row.get("RSI", 0.0) or 0.0),
-                        float(last_row.get("MACD", 0.0) or 0.0),
-                        float(last_row.get("trend_score", 0.0) or 0.0),
-                    ]
+                    aux_features = build_live_aux_features(
+                        rsi=last_row.get("RSI"),
+                        macd=last_row.get("MACD"),
+                    )
                     rsi = last_row.get("RSI")
                     macd = last_row.get("MACD")
                     macd_sig = last_row.get("MACD_signal")
@@ -242,7 +239,7 @@ def get_fusion_signal(ticker: str) -> str:
 @tool
 def get_technicals(ticker: str) -> str:
     """
-    Get RSI, MACD, and trend score values for a stock.
+    Get RSI and MACD technical values for a stock.
 
     Args:
         ticker: Stock ticker symbol (e.g., 'AAPL', 'TSLA')
@@ -265,7 +262,6 @@ def get_technicals(ticker: str) -> str:
 
         rsi = last_row.get("RSI", "N/A")
         macd = last_row.get("MACD", "N/A")
-        trend_score = last_row.get("trend_score", "N/A")
         macd_sig = last_row.get("MACD_signal", "N/A")
 
         rsi_interpretation = ""
@@ -281,7 +277,6 @@ def get_technicals(ticker: str) -> str:
 
         rsi_text = f"{float(rsi):.2f}" if isinstance(rsi, (int, float)) else "N/A"
         macd_text = f"{float(macd):.4f}" if isinstance(macd, (int, float)) else "N/A"
-        trend_text = f"{float(trend_score):.4f}" if isinstance(trend_score, (int, float)) else "N/A"
         macd_sig_text = f"{float(macd_sig):.4f}" if isinstance(macd_sig, (int, float)) else "N/A"
         macd_cross = "Bullish ↑" if isinstance(macd, (int, float)) and isinstance(macd_sig, (int, float)) and macd > macd_sig else "Bearish ↓"
 
@@ -289,7 +284,6 @@ def get_technicals(ticker: str) -> str:
             f"Technical Indicators for {ticker} (as of {last_row.get('date', 'N/A')}):\n"
             f"- RSI (14): {rsi_text}{rsi_interpretation}\n"
             f"- MACD: {macd_text}\n"
-            f"- Trend Score: {trend_text}\n"
             f"- MACD Signal: {macd_sig_text}\n"
             f"- MACD Cross: {macd_cross}\n"
         )
@@ -319,7 +313,7 @@ When asked to analyze a stock:
 1. First use analyze_chart to get the ViT prediction
 2. Then use find_patterns to find similar historical patterns
 3. Use get_news for current sentiment
-4. Use get_technicals for RSI/MACD/trend score
+4. Use get_technicals for RSI/MACD
 5. Optionally use get_fusion_signal for the combined signal
 6. Synthesize everything into a clear, actionable summary
 
@@ -329,7 +323,7 @@ DISCLAIMER: Always remind users that AI predictions are for educational purposes
 def create_analyst_agent(
     memory=None,
     verbose: bool = False,
-) -> AgentExecutor:
+) -> object:
     """
     Create a LangChain analyst agent with chart analysis tools.
 
@@ -338,7 +332,7 @@ def create_analyst_agent(
         verbose: Whether to show agent's reasoning steps.
 
     Returns:
-        Configured AgentExecutor ready for conversation.
+        Configured agent ready for conversation.
     """
     api_key = os.getenv("GOOGLE_API_KEY")
     if not api_key:
@@ -361,32 +355,17 @@ def create_analyst_agent(
         get_technicals,
     ]
 
-    # Create prompt template
-    prompt = ChatPromptTemplate.from_messages([
-        ("system", SYSTEM_PROMPT),
-        MessagesPlaceholder(variable_name="chat_history", optional=True),
-        ("human", "{input}"),
-        MessagesPlaceholder(variable_name="agent_scratchpad"),
-    ])
-
-    # Create the agent
-    agent = create_tool_calling_agent(llm, tools, prompt)
-
-    # Create executor
-    executor = AgentExecutor(
-        agent=agent,
+    agent = create_agent(
+        model=llm,
         tools=tools,
-        verbose=verbose,
-        handle_parsing_errors=True,
-        max_iterations=10,
-        return_intermediate_steps=False,
+        system_prompt=SYSTEM_PROMPT,
+        debug=verbose,
     )
-
-    return executor
+    return agent
 
 
 def chat_with_agent(
-    agent: AgentExecutor,
+    agent: object,
     message: str,
     chat_history: list | None = None,
 ) -> str:
@@ -394,7 +373,7 @@ def chat_with_agent(
     Send a message to the analyst agent and get a response.
 
     Args:
-        agent: The AgentExecutor instance.
+        agent: The configured agent instance.
         message: User's message/question.
         chat_history: List of previous (human, ai) message pairs.
 
@@ -411,10 +390,14 @@ def chat_with_agent(
 
     try:
         result = agent.invoke({
-            "input": message,
-            "chat_history": history_messages,
+            "messages": history_messages + [HumanMessage(content=message)],
         })
-        return result.get("output", "I apologize, I couldn't generate a response.")
+        messages = result.get("messages", []) if isinstance(result, dict) else []
+        for msg in reversed(messages):
+            content = getattr(msg, "content", None)
+            if isinstance(content, str) and content.strip():
+                return content
+        return "I apologize, I couldn't generate a response."
 
     except Exception as e:
         return (

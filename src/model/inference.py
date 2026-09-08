@@ -130,6 +130,16 @@ def predict_image(
     return result
 
 
+def build_live_aux_features(
+    rsi: float | None = None,
+    macd: float | None = None,
+) -> list[float] | None:
+    """Build live inference features using only RSI and MACD."""
+    if rsi is None or macd is None:
+        return None
+    return [float(rsi), float(macd), 0.0]
+
+
 def predict_batch(
     image_paths: list[str | Path],
     checkpoint_path: str | Path | None = None,

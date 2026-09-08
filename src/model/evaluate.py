@@ -15,6 +15,7 @@ if __name__ == "__main__":
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 
 import json
+import os
 import torch
 import numpy as np
 import matplotlib
@@ -38,6 +39,20 @@ from config import (
 )
 from src.model.vit_model import load_model
 from src.model.train import CandlestickDataset, get_transforms
+
+
+def _get_dataloader_kwargs(device: torch.device) -> dict:
+    """
+    Return DataLoader settings that work reliably on local Windows setups.
+
+    Multiprocess workers can fail in restricted/sandboxed Windows terminals,
+    so we fall back to a single-process loader there.
+    """
+    use_workers = 0 if os.name == "nt" else 2
+    return {
+        "num_workers": use_workers,
+        "pin_memory": device.type == "cuda",
+    }
 
 
 def evaluate_model(
@@ -65,31 +80,44 @@ def evaluate_model(
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     else:
         device = torch.device(device_str)
-    print(f"🖥️  Using device: {device}")
+    print(f"Using device: {device}")
 
     # Load model
-    print("\n📦 Loading model...")
+    print("\nLoading model...")
     model = load_model(checkpoint_path, device=str(device))
 
     # Load test dataset
-    print("\n📂 Loading test dataset...")
-    test_dataset = CandlestickDataset(csv_path, "test", get_transforms("test"))
+    print("\nLoading test dataset...")
+    test_dataset = CandlestickDataset(
+        csv_path,
+        "test",
+        get_transforms("test"),
+        include_aux_features=getattr(model, "use_aux_features", False),
+    )
+    loader_kwargs = _get_dataloader_kwargs(device)
     test_loader = DataLoader(
         test_dataset, batch_size=BATCH_SIZE, shuffle=False,
-        num_workers=2, pin_memory=True,
+        **loader_kwargs,
     )
 
     # Run inference
-    print("\n🔍 Running evaluation...")
+    print("\nRunning evaluation...")
     all_preds = []
     all_labels = []
     all_probs = []
 
     model.eval()
     with torch.no_grad():
-        for images, labels in tqdm(test_loader, desc="Evaluating"):
+        for batch in tqdm(test_loader, desc="Evaluating"):
+            if len(batch) == 3:
+                images, labels, aux_features = batch
+                aux_features = aux_features.to(device)
+            else:
+                images, labels = batch
+                aux_features = None
+
             images = images.to(device)
-            outputs = model(images)
+            outputs = model(images, aux_features)
             probs = torch.softmax(outputs, dim=1)
 
             _, predicted = outputs.max(1)
@@ -116,7 +144,7 @@ def evaluate_model(
     cm = confusion_matrix(all_labels, all_preds)
 
     print(f"\n{'='*50}")
-    print(f"📊 Evaluation Results:")
+    print("Evaluation Results:")
     print(f"   Accuracy: {accuracy:.4f}")
     print(f"   F1 (macro): {f1_macro:.4f}")
     print(f"\n{report_str}")
@@ -135,7 +163,7 @@ def evaluate_model(
         metrics_path = CHECKPOINTS_DIR / "evaluation_metrics.json"
         with open(metrics_path, "w") as f:
             json.dump(results, f, indent=2)
-        print(f"   💾 Metrics saved to: {metrics_path}")
+        print(f"   Metrics saved to: {metrics_path}")
 
         # Plot and save confusion matrix
         plot_confusion_matrix(cm, CHECKPOINTS_DIR / "confusion_matrix.png")
@@ -176,7 +204,7 @@ def plot_confusion_matrix(
     plt.tight_layout()
     fig.savefig(output_path, dpi=150, bbox_inches="tight")
     plt.close(fig)
-    print(f"   📊 Confusion matrix saved to: {output_path}")
+    print(f"   Confusion matrix saved to: {output_path}")
 
 
 if __name__ == "__main__":

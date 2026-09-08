@@ -51,7 +51,6 @@ def explain_prediction(
     attention_description: str = "",
     rsi: float | None = None,
     macd: float | None = None,
-    trend_score: float | None = None,
     ticker: str = "the stock",
     similar_patterns: list[dict] | None = None,
 ) -> str:
@@ -68,7 +67,6 @@ def explain_prediction(
         attention_description: Natural language description of attention.
         rsi: RSI indicator value (0-100).
         macd: MACD line value.
-        trend_score: Volatility-adjusted trend score used by the classifier.
         ticker: Stock ticker symbol.
         similar_patterns: List of similar candlestick patterns from RAG.
 
@@ -90,9 +88,6 @@ def explain_prediction(
         technical_text += f"RSI is {rsi:.1f} ({rsi_condition}). "
     if macd is not None:
         technical_text += f"MACD is {macd:.4f}. "
-    if trend_score is not None:
-        trend_bias = "bullish" if trend_score > 0.5 else "bearish" if trend_score < -0.5 else "neutral"
-        technical_text += f"Trend score is {trend_score:.2f}, which suggests a {trend_bias} setup."
 
     pattern_text = ""
     if similar_patterns:
@@ -252,7 +247,6 @@ if __name__ == "__main__":
         attention_description="The model focused on recent candle bodies showing consecutive green candles.",
         rsi=55.3,
         macd=1.25,
-        trend_score=0.84,
         ticker="AAPL",
     )
     print(result)

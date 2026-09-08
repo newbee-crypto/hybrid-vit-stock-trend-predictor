@@ -81,7 +81,7 @@ def generate_chart_image(
             df_window,
             type="candle",
             style=CUSTOM_STYLE,
-            volume=True,
+            volume=False,
             figsize=(fig_width, fig_height),
             returnfig=True,
             tight_layout=True,

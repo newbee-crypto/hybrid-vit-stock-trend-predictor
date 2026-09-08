@@ -7,6 +7,7 @@ and signal fusion results.
 """
 
 import sys
+import time
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
@@ -20,6 +21,12 @@ from PIL import Image
 from datetime import datetime, timedelta
 
 from config import STOCK_TICKERS, CHARTS_DIR, LABELS_DIR, CHECKPOINTS_DIR
+from src.monitoring.metrics import (
+    INFERENCE_LATENCY,
+    INFERENCE_REQUESTS,
+    MODEL_LOADED,
+    PREDICTION_CONFIDENCE,
+)
 from utils.ui_helpers import (
     inject_custom_css,
     metric_card,
@@ -45,7 +52,6 @@ image_to_analyze = None
 selected_ticker = None
 rsi_val = None
 macd_val = None
-trend_score_val = None
 macd_signal_val = None
 
 with tab1:
@@ -90,7 +96,6 @@ with tab1:
                 last_row = ticker_data.iloc[-1]
                 rsi_val = last_row.get("RSI")
                 macd_val = last_row.get("MACD")
-                trend_score_val = last_row.get("trend_score")
                 macd_signal_val = last_row.get("MACD_signal")
         except Exception:
             pass
@@ -99,6 +104,7 @@ with tab1:
         pass  # Analysis runs below
 
 with tab2:
+    st.caption("Demo mode only. For strongest results, use the stock selector flow.")
     uploaded_file = st.file_uploader(
         "Upload a candlestick chart image (PNG, JPG)",
         type=["png", "jpg", "jpeg"],
@@ -119,10 +125,9 @@ if image_to_analyze is not None:
     with st.spinner("🧠 Running AI analysis..."):
         try:
             # 1. ViT Prediction
-            from src.model.inference import predict_image
-            aux_features = None
-            if rsi_val is not None and macd_val is not None and trend_score_val is not None:
-                aux_features = [rsi_val, macd_val, trend_score_val]
+            from src.model.inference import predict_image, build_live_aux_features
+            aux_features = build_live_aux_features(rsi=rsi_val, macd=macd_val)
+            inference_start = time.perf_counter()
             if isinstance(image_to_analyze, (str, Path)):
                 prediction_result = predict_image(
                     str(image_to_analyze),
@@ -139,6 +144,12 @@ if image_to_analyze is not None:
             prediction = prediction_result["prediction"]
             confidence = prediction_result["confidence"]
             probabilities = prediction_result["probabilities"]
+
+            # Record the complete model-serving operation, including model loading.
+            INFERENCE_LATENCY.observe(time.perf_counter() - inference_start)
+            INFERENCE_REQUESTS.labels(prediction=prediction).inc()
+            PREDICTION_CONFIDENCE.observe(confidence)
+            MODEL_LOADED.set(1)
 
             # Display prediction banner
             st.markdown(
@@ -184,10 +195,10 @@ if image_to_analyze is not None:
                     st.markdown(confidence_bar(prob, color), unsafe_allow_html=True)
 
                 # Technical indicators
-                if rsi_val is not None or macd_val is not None or trend_score_val is not None:
+                if rsi_val is not None or macd_val is not None:
                     st.markdown(section_header("📏 Technical Indicators"), unsafe_allow_html=True)
 
-                    t_col1, t_col2, t_col3 = st.columns(3)
+                    t_col1, t_col2 = st.columns(2)
                     with t_col1:
                         rsi_display = f"{rsi_val:.1f}" if rsi_val is not None else "N/A"
                         rsi_delta = "Overbought" if rsi_val and rsi_val > 70 else "Oversold" if rsi_val and rsi_val < 30 else "Neutral"
@@ -199,12 +210,6 @@ if image_to_analyze is not None:
                         macd_delta = "Bullish" if macd_val and macd_signal_val and macd_val > macd_signal_val else "Bearish"
                         macd_type = "positive" if macd_delta == "Bullish" else "negative"
                         st.markdown(metric_card("MACD", macd_display, macd_delta, macd_type), unsafe_allow_html=True)
-
-                    with t_col3:
-                        trend_display = f"{trend_score_val:.2f}" if trend_score_val is not None else "N/A"
-                        trend_delta = "Bullish" if trend_score_val and trend_score_val > 0.5 else "Bearish" if trend_score_val and trend_score_val < -0.5 else "Neutral"
-                        trend_type = "positive" if trend_delta == "Bullish" else "negative" if trend_delta == "Bearish" else "neutral"
-                        st.markdown(metric_card("Trend Score", trend_display, trend_delta, trend_type), unsafe_allow_html=True)
 
             # 3. Attention Analysis
             st.markdown(custom_divider(), unsafe_allow_html=True)
@@ -249,7 +254,6 @@ if image_to_analyze is not None:
                     attention_description=attention_description,
                     rsi=rsi_val,
                     macd=macd_val,
-                    trend_score=trend_score_val,
                     ticker=selected_ticker or "the stock",
                 )
                 st.markdown(f"> {explanation}")

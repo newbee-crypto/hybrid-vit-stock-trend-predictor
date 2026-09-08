@@ -1,15 +1,16 @@
-FROM python:3.11-slim
+FROM python:3.12-slim
 
 WORKDIR /app
 
 # System dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
+    curl \
     && rm -rf /var/lib/apt/lists/*
 
 # Python dependencies
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+COPY requirements.txt requirements-docker.txt ./
+RUN pip install --no-cache-dir -r requirements-docker.txt
 
 # Copy application code
 COPY . .
@@ -19,7 +20,7 @@ RUN mkdir -p data/raw data/charts data/labels data/patterns models/checkpoints
 
 # Expose Streamlit port
 EXPOSE 8501
-
+EXPOSE 8000
 # Health check
 HEALTHCHECK CMD curl --fail http://localhost:8501/_stcore/health || exit 1
 

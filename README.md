@@ -1,10 +1,10 @@
 # Hybrid ViT Stock Trend Predictor
 
-Hybrid deep learning project for short-term stock trend classification using candlestick chart images plus `RSI`, `MACD`, and a volatility-adjusted `trend_score`.
+Hybrid deep learning project for short-term stock trend classification using candlestick chart images plus technical indicators such as `RSI` and `MACD`.
 
 The model predicts `Down`, `Neutral`, or `Up`, and the app wraps the prediction in explainability, signal fusion, backtesting, and chat-based analysis.
 
-![Python](https://img.shields.io/badge/Python-3.11-blue)
+![Python](https://img.shields.io/badge/Python-3.12-blue)
 ![PyTorch](https://img.shields.io/badge/PyTorch-2.1+-red)
 ![Streamlit](https://img.shields.io/badge/Streamlit-1.29+-ff4b4b)
 
@@ -19,7 +19,7 @@ This project was built to move beyond pure chart-image classification.
 
 - Best current test accuracy: `73%`
 - Classes: `Down`, `Neutral`, `Up`
-- Hybrid inputs: chart image + `RSI` + `MACD` + `trend_score`
+- Live app inputs: chart image + `RSI` + `MACD`
 
 ## Core Features
 

@@ -16,7 +16,6 @@ if __name__ == "__main__":
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 
 import pandas as pd
-import pandas_ta as ta
 import numpy as np
 from tqdm import tqdm
 
@@ -29,6 +28,7 @@ from config import (
     FORWARD_WINDOW,
     TREND_UP_THRESHOLD,
     TREND_DOWN_THRESHOLD,
+    VOLATILITY_WINDOW,
     RSI_PERIOD,
     MACD_FAST,
     MACD_SLOW,
@@ -37,6 +37,38 @@ from config import (
     VAL_RATIO,
     CLASS_NAMES,
 )
+
+
+def assign_time_based_splits(dataset: pd.DataFrame) -> pd.DataFrame:
+    """
+    Assign train/val/test splits using unique chart dates.
+
+    Keeping an entire date in a single split avoids leakage where some
+    tickers from the same market day land in train and others in val/test.
+    """
+    dataset = dataset.copy()
+    unique_dates = np.array(sorted(dataset["date"].unique()))
+
+    if len(unique_dates) < 3:
+        dataset["split"] = "train"
+        return dataset
+
+    train_cut_idx = min(max(int(len(unique_dates) * TRAIN_RATIO) - 1, 0), len(unique_dates) - 1)
+    val_cut_idx = min(
+        max(int(len(unique_dates) * (TRAIN_RATIO + VAL_RATIO)) - 1, train_cut_idx),
+        len(unique_dates) - 1,
+    )
+
+    train_cut_date = unique_dates[train_cut_idx]
+    val_cut_date = unique_dates[val_cut_idx]
+
+    dataset["split"] = "test"
+    dataset.loc[dataset["date"] <= train_cut_date, "split"] = "train"
+    dataset.loc[
+        (dataset["date"] > train_cut_date) & (dataset["date"] <= val_cut_date),
+        "split",
+    ] = "val"
+    return dataset
 
 
 def compute_technical_indicators(df: pd.DataFrame) -> pd.DataFrame:
@@ -51,24 +83,31 @@ def compute_technical_indicators(df: pd.DataFrame) -> pd.DataFrame:
     """
     df = df.copy()
 
-    # RSI
-    df["RSI"] = ta.rsi(df["Close"], length=RSI_PERIOD)
+    close = df["Close"].astype(float)
 
-    # MACD
-    macd_result = ta.macd(
-        df["Close"],
-        fast=MACD_FAST,
-        slow=MACD_SLOW,
-        signal=MACD_SIGNAL,
-    )
-    if macd_result is not None:
-        df["MACD"] = macd_result.iloc[:, 0]
-        df["MACD_signal"] = macd_result.iloc[:, 1]
-        df["MACD_hist"] = macd_result.iloc[:, 2]
-    else:
-        df["MACD"] = 0.0
-        df["MACD_signal"] = 0.0
-        df["MACD_hist"] = 0.0
+    # RSI using Wilder-style exponential smoothing.
+    delta = close.diff()
+    gains = delta.clip(lower=0)
+    losses = -delta.clip(upper=0)
+    avg_gain = gains.ewm(alpha=1 / RSI_PERIOD, adjust=False, min_periods=RSI_PERIOD).mean()
+    avg_loss = losses.ewm(alpha=1 / RSI_PERIOD, adjust=False, min_periods=RSI_PERIOD).mean()
+    rs = avg_gain / avg_loss.replace(0, np.nan)
+    df["RSI"] = 100 - (100 / (1 + rs))
+    df["RSI"] = df["RSI"].fillna(50.0)
+
+    # MACD using exponential moving averages.
+    ema_fast = close.ewm(span=MACD_FAST, adjust=False, min_periods=MACD_FAST).mean()
+    ema_slow = close.ewm(span=MACD_SLOW, adjust=False, min_periods=MACD_SLOW).mean()
+    df["MACD"] = ema_fast - ema_slow
+    df["MACD_signal"] = df["MACD"].ewm(
+        span=MACD_SIGNAL,
+        adjust=False,
+        min_periods=MACD_SIGNAL,
+    ).mean()
+    df["MACD_hist"] = df["MACD"] - df["MACD_signal"]
+    df[["MACD", "MACD_signal", "MACD_hist"]] = df[
+        ["MACD", "MACD_signal", "MACD_hist"]
+    ].fillna(0.0)
 
     return df
 
@@ -79,8 +118,8 @@ def compute_labels(df: pd.DataFrame) -> pd.DataFrame:
 
     The label is determined by the percentage change in closing price
     over the next FORWARD_WINDOW trading days:
-      - Up: return > TREND_UP_THRESHOLD (+2%)
-      - Down: return < TREND_DOWN_THRESHOLD (-2%)
+      - Up: return > TREND_UP_THRESHOLD (+.5%)
+      - Down: return < TREND_DOWN_THRESHOLD (-.5%)
       - Neutral: otherwise
 
     Args:
@@ -92,14 +131,24 @@ def compute_labels(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
 
     # Compute forward return
-    df["forward_return"] = (
-        df["Close"].shift(-FORWARD_WINDOW) / df["Close"] - 1.0
+    close = df["Close"].astype(float)
+    df["forward_return"] = close.shift(-FORWARD_WINDOW) / close - 1.0
+
+    # Normalize the target by recent realized volatility so the same
+    # threshold works across low-volatility and high-volatility tickers.
+    daily_return = close.pct_change()
+    df["rolling_volatility"] = (
+        daily_return
+        .rolling(VOLATILITY_WINDOW, min_periods=VOLATILITY_WINDOW)
+        .std()
+        * np.sqrt(FORWARD_WINDOW)
     )
+    df["trend_score"] = df["forward_return"] / df["rolling_volatility"].replace(0, np.nan)
 
     # Assign labels
     conditions = [
-        df["forward_return"] > TREND_UP_THRESHOLD,
-        df["forward_return"] < TREND_DOWN_THRESHOLD,
+        df["trend_score"] > TREND_UP_THRESHOLD,
+        df["trend_score"] < TREND_DOWN_THRESHOLD,
     ]
     choices = ["Up", "Down"]
     df["label"] = np.select(conditions, choices, default="Neutral")
@@ -123,7 +172,7 @@ def create_labeled_dataset(
 
     Returns:
         DataFrame with columns: image_path, ticker, date, label, label_id,
-        RSI, MACD, MACD_signal, forward_return, split.
+        RSI, MACD, MACD_signal, forward_return, trend_score, split.
     """
     tickers = tickers or STOCK_TICKERS
     all_records = []
@@ -148,16 +197,22 @@ def create_labeled_dataset(
             print(f"   ⚠️  No charts directory for {ticker}, skipping.")
             continue
 
-        for i in range(WINDOW_SIZE, len(df)):
-            # The chart ending at position i
-            chart_date = df.iloc[i - 1]["Date"]
+        # A chart ending on day i should use the label computed from the
+        # same day, not the next trading day. The previous version shifted
+        # labels forward by one day and blurred the training target.
+        last_labeled_idx = len(df) - FORWARD_WINDOW
+        for i in range(WINDOW_SIZE - 1, last_labeled_idx):
+            chart_date = df.iloc[i]["Date"]
             date_str = pd.Timestamp(chart_date).strftime("%Y-%m-%d")
             image_path = chart_dir / f"{date_str}.png"
 
-            # Get the row at position i (the day AFTER the chart window)
             row = df.iloc[i]
 
-            if pd.isna(row.get("forward_return")) or pd.isna(row.get("label_id")):
+            if (
+                pd.isna(row.get("forward_return"))
+                or pd.isna(row.get("trend_score"))
+                or pd.isna(row.get("label_id"))
+            ):
                 continue
 
             if not image_path.exists():
@@ -173,6 +228,7 @@ def create_labeled_dataset(
                 "MACD": round(row.get("MACD", 0), 4) if not pd.isna(row.get("MACD")) else 0.0,
                 "MACD_signal": round(row.get("MACD_signal", 0), 4) if not pd.isna(row.get("MACD_signal")) else 0.0,
                 "forward_return": round(row["forward_return"], 4),
+                "trend_score": round(row["trend_score"], 4),
             })
 
     dataset = pd.DataFrame(all_records)
@@ -183,15 +239,7 @@ def create_labeled_dataset(
 
     # Sort by date for time-based split
     dataset = dataset.sort_values("date").reset_index(drop=True)
-
-    # Time-based split (no lookahead bias)
-    n = len(dataset)
-    train_end = int(n * TRAIN_RATIO)
-    val_end = int(n * (TRAIN_RATIO + VAL_RATIO))
-
-    dataset["split"] = "test"
-    dataset.loc[:train_end - 1, "split"] = "train"
-    dataset.loc[train_end:val_end - 1, "split"] = "val"
+    dataset = assign_time_based_splits(dataset)
 
     return dataset
 

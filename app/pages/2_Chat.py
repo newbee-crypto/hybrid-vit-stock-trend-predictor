@@ -83,7 +83,7 @@ if not st.session_state.chat_history:
         f"Compare {STOCK_TICKERS[0]} and {STOCK_TICKERS[2]} technical indicators",
         f"Give me the full signal fusion analysis for {STOCK_TICKERS[5]}",
         "Which stock has the most bullish pattern right now?",
-        "Explain what RSI, MACD, and trend score mean in simple terms",
+        "Explain what RSI and MACD mean in simple terms",
     ]
 
     cols = st.columns(3)
